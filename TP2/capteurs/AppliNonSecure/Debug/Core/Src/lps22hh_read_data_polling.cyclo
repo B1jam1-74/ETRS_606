@@ -1,0 +1,5 @@
+../Core/Src/lps22hh_read_data_polling.c:140:6:lps22hh_read_data_polling	8
+../Core/Src/lps22hh_read_data_polling.c:203:16:platform_write	1
+../Core/Src/lps22hh_read_data_polling.c:211:16:platform_read	1
+../Core/Src/lps22hh_read_data_polling.c:219:13:platform_delay	1
+../Core/Src/lps22hh_read_data_polling.c:228:13:platform_init	1

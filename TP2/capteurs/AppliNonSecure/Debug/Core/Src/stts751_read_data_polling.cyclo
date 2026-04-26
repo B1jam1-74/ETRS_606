@@ -1,0 +1,5 @@
+../Core/Src/stts751_read_data_polling.c:113:6:stts751_read_data_polling	7
+../Core/Src/stts751_read_data_polling.c:181:16:platform_write	1
+../Core/Src/stts751_read_data_polling.c:201:16:platform_read	1
+../Core/Src/stts751_read_data_polling.c:218:13:platform_delay	1
+../Core/Src/stts751_read_data_polling.c:228:13:platform_init	1

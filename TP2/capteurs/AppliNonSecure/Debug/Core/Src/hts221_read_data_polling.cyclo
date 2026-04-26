@@ -1,0 +1,6 @@
+../Core/Src/hts221_read_data_polling.c:142:9:linear_interpolation	1
+../Core/Src/hts221_read_data_polling.c:148:6:hts221_read_data_polling	23
+../Core/Src/hts221_read_data_polling.c:312:16:platform_write	2
+../Core/Src/hts221_read_data_polling.c:345:16:platform_read	2
+../Core/Src/hts221_read_data_polling.c:382:13:platform_delay	1
+../Core/Src/hts221_read_data_polling.c:394:13:platform_init	1

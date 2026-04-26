@@ -1,0 +1,9 @@
+../../Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_ll_bus.h:1407:22:LL_AHB4_GRP1_EnableClock	1
+../Core/Src/main.c:85:5:main	1
+../Core/Src/main.c:156:13:MX_I2C1_Init	4
+../Core/Src/main.c:204:13:MX_USART2_UART_Init	5
+../Core/Src/main.c:252:13:MX_GPIO_Init	1
+../Core/Src/main.c:289:5:__io_putchar	1
+../Core/Src/main.c:296:13:NS_LED_InitAndOn	1
+../Core/Src/main.c:312:13:check_sensors_whoami	6
+../Core/Src/main.c:373:6:Error_Handler	1
