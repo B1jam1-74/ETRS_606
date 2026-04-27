@@ -294,7 +294,7 @@ Le board client se connecte et envoie les messages, qui sont renvoyés par le se
 | TensorFlow / Keras | Construction et entraînement des réseaux de neurones |
 | Meteostat | Données météo historiques (TP3) |
 
-## Auteur
+## Auteurs
 
 El-Hadji-Abdoul-Aziz Sarr - Ndeye-Rama Thiam - Benjamin Avocat-Maulaz
 Licence ESET, Université Savoie Mont-Blanc (2025–2026)
