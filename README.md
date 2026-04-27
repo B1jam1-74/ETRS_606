@@ -12,7 +12,7 @@ ETRS_606/
 ├── TP1/   # Réseaux de neurones avec TensorFlow/Keras (Google Colab)
 ├── TP2/   # Prise en main du STM32N657 avec TrustZone
 ├── TP3/   # Modèle météo TFLite — entraînement et export
-└── TP4/   # (à venir)
+└── TP4/   # Communication TCP avec ThreadX/NetXDuo
 ```
 
 ---
@@ -146,9 +146,140 @@ Les fichiers `.tflite` produits sont prêts à être importés dans **STM32Cube.
 
 ---
 
-## TP4
+## TP4 — Réseau et RTOS ThreadX/NetXDuo sur STM32N657
 
-> Sujet disponible (`ETRS606_TP4.pdf`). Les travaux pratiques associés sont à venir.
+**Objectif :** développer une application de communication réseau utilisant le stack **Azure RTOS NetX/NetXDuo** sur le STM32N657, en exploitant la gestion multi-threads du noyau temps réel **ThreadX**.
+
+**Cible matérielle :** carte Nucleo-N657X0-Q (STM32N657) avec interface Ethernet.  
+**Environnement :** STM32CubeIDE, ThreadX, NetXDuo, middleware Azure RTOS.
+
+### Projet `Nx_TCP_Echo_Client/` — Client TCP avec ThreadX/NetXDuo
+
+Client TCP communicant avec un serveur distant via le protocole TCP/IP, intégrant une architecture multi-thread ThreadX et la gestion de pile réseau NetXDuo.
+
+#### Architecture applicative
+
+L'initialisation des ressources NetX/NetXDuo s'effectue dans `tx_application_define()` appelée au démarrage du kernel ThreadX :
+
+- **Allocation d'un pool de paquets** (`NX_PACKET_POOL`) pour gérer les buffers réseau.
+- **Initialisation d'une instance IP** (`NX_IP`) utilisant ce pool.
+- **Activation des protocoles** ARP, ICMP, UDP et TCP sur l'instance IP.
+- **Création d'un client DHCP** pour l'acquisition automatique d'adresse IP.
+
+Deux threads applicatifs sont créés avec priorité identique (10) :
+
+| Thread | Flags de création | Rôle |
+|---|---|---|
+| **NxAppThread** | TX_AUTO_START | Démarre automatiquement ; lance le client DHCP et attend la résolution IP avant de relancer AppTCPThread |
+| **AppTCPThread** | TX_DONT_START | Créée mais attendant le signal de NxAppThread ; effectue la connexion TCP et l'échange de messages |
+
+#### Fonctionnement de NxAppThread
+
+1. Lance le client DHCP.
+2. Attend la résolution de l'adresse IP du board.
+3. Reprend l'exécution de `AppTCPThread`.
+
+#### Fonctionnement de AppTCPThread
+
+1. Crée un socket TCP.
+2. Se connecte au serveur TCP distant sur le port prédéfini.
+3. À succès de connexion, envoie jusqu'à `MAX_PACKET_COUNT` messages au serveur.
+4. Pour chaque message envoyé :
+   - Lit la réponse du serveur (echo).
+   - Affiche la réponse sur la HyperTerminal (USART1 à 115 200 bps).
+   - Bascule la LED verte pour indication visuelle.
+
+#### Résultats attendus
+
+- Affichage de l'adresse IP du board sur la HyperTerminal.
+- Affichage de chaque réponse du serveur.
+- Récapitulatif de succès : `SUCCESS : 100 / 100 packets sent` (selon `MAX_PACKET_COUNT`).
+- Basculement continu de la LED verte pendant le transfert.
+
+#### Comportements en cas d'erreur
+
+- **LED rouge qui bascule** : indication d'une erreur au cours de l'exécution.
+- **Message d'échec affiché** : affichage des messages attendus vs. reçus en cas d'incomplétude de l'échange.
+
+#### Configuration et déploiement
+
+**Configuration TCP (fichier `app_netxduo.h`)**  
+Éditer les valeurs suivantes :
+
+```c
+#define TCP_SERVER_ADDRESS  "192.168.1.100"   // Adresse IP du serveur
+#define TCP_SERVER_PORT     6000              // Port TCP d'écoute
+```
+
+**Test avec echotool (serveur d'écho)**  
+Sur PC Windows, lancer un serveur d'écho :
+
+```cmd
+c:\> .\echotool.exe /p tcp /s 6000
+```
+
+Le board client se connecte et envoie les messages, qui sont renvoyés par le serveur.
+
+**Prérequis réseau**
+
+- Un serveur DHCP accessible sur le LAN (pour l'acquisition IP).
+- L'adresse MAC du board doit être unique sur le LAN. Adresse MAC statique définie dans `main.c` — `MX_ETH_Init()` :
+  ```c
+  MACAddr[0] = 0x00;
+  MACAddr[1] = 0x80;
+  MACAddr[2] = 0xE0;
+  MACAddr[3] = 0x00;
+  MACAddr[4] = 0x10;
+  MACAddr[5] = 0x00;
+  ```
+
+**Exécution en développement (debug)**
+
+1. Placer les switchs en mode développement (BOOT1 = 2-3).
+2. Ouvrir le projet dans STM32CubeIDE.
+3. Éditer `app_netxduo.h` (adresse et port du serveur).
+4. Compiler et charger en RAM du board.
+5. Lancer le débogage (debug mode).
+
+**Exécution depuis la flash externe**
+
+1. Générer le binaire `Nx_TCP_Echo_Client.bin`.
+2. Signer avec CubeProgrammer et STM32_SigningTool_CLI :
+   ```cmd
+   STM32_SigningTool_CLI.exe -bin Nx_TCP_Echo_Client.bin -nk -of 0x80000000 -t fsbl -o Nx_TCP_Echo_Client-trusted.bin -hv 2.3 -dump Nx_TCP_Echo_Client-trusted.bin
+   ```
+3. Charger `Nx_TCP_Echo_Client-trusted.bin` en flash externe à l'adresse `0x70000000` via CubeProgrammer.
+4. Configurer les switchs : BOOT0 = 1-2, BOOT1 = 1-2.
+5. Appuyer sur reset.
+
+> **Note :** Pour CubeProgrammer v2.21+, ajouter l'option `-align` à la commande de signature.
+
+#### Conseils d'utilisation ThreadX
+
+- ThreadX utilise **Systick** comme base de temps ; la HAL doit utiliser un timer IP distinct (TIMx).
+- Fréquence des ticks configurée par défaut à **100 ticks/sec** (`TX_TIMER_TICKS_PER_SECOND` dans `tx_user.h`). Modifier aussi `tx_initialize_low_level.S` en cas de changement.
+- ThreadX désactive tous les interrupts au démarrage du kernel ; tout appel système (HAL, BSP) doit être effectué en début d'application ou dans les fonctions d'entrée des threads.
+- Pour allocation dynamique, éditer le fichier linker (`.ld`) afin d'exposer la première adresse libre en RAM vers `tx_application_define()` (voir détails dans projet ou documentation STM32CubeIDE).
+
+#### Conseils d'utilisation NetX Duo
+
+- Le pool de paquets `NX_PACKET_POOL` doit être alloué dans une section mémoire dédiée (`.NetXPoolSection`).
+- En cas de congestion réseau, augmenter les paramètres `ETH_TX_DESC_CNT` et `ETH_RX_DESC_CNT` dans `stm32n6xx_hal_conf.h` (coûteux en mémoire).
+
+### Fichiers
+
+| Fichier | Description |
+|---|---|
+| `Nx_TCP_Echo_Client.ioc` | Configuration CubeMX (horloges, UART1, Ethernet, etc.) |
+| `STM32CubeIDE/` | Projet STM32CubeIDE complet |
+| `EWARM/` | Projet IAR Embedded Workbench |
+| `MDK-ARM/` | Projet Keil MDK-ARM |
+| `Middlewares/` | Stack ThreadX et NetXDuo (Azure RTOS) |
+| `Drivers/` | Drivers HAL STM32N6xx |
+| `FSBL/` | Premier étage bootloader |
+| `readme.html` | Documentation HTML du projet |
+| `README.md` | README du projet |
+| `ETRS606_TP4.pdf` | Sujet du TP |
 
 ---
 
