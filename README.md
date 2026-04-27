@@ -296,4 +296,5 @@ Le board client se connecte et envoie les messages, qui sont renvoyés par le se
 
 ## Auteur
 
-Benjamin Avocat-Maulaz — Licence ESET, Université Savoie Mont-Blanc (2025–2026)
+El-Hadji-Abdoul-Aziz Sarr - Ndeye-Rama Thiam - Benjamin Avocat-Maulaz
+Licence ESET, Université Savoie Mont-Blanc (2025–2026)
