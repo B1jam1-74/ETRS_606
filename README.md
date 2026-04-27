@@ -146,126 +146,343 @@ Les fichiers `.tflite` produits sont prêts à être importés dans **STM32Cube.
 
 ---
 
-## TP4 — Réseau et RTOS ThreadX/NetXDuo sur STM32N657
+# TP4 — Réseau, ThreadX / NetX Duo et envoi des données capteurs vers ThingSpeak sur STM32N657
 
-**Objectif :** développer une application de communication réseau utilisant le stack **Azure RTOS NetX/NetXDuo** sur le STM32N657, en exploitant la gestion multi-threads du noyau temps réel **ThreadX**.
+## Objectif
 
-**Cible matérielle :** carte Nucleo-N657X0-Q (STM32N657) avec interface Ethernet.  
-**Environnement :** STM32CubeIDE, ThreadX, NetXDuo, middleware Azure RTOS.
+L’objectif de ce TP est de mettre en œuvre une chaîne complète de communication IoT sur la carte **STM32N657**, en combinant :
 
-### Projet `Nx_TCP_Echo_Client/` — Client TCP avec ThreadX/NetXDuo
+- la lecture de données capteurs,
+- la communication réseau Ethernet,
+- l’utilisation du noyau temps réel **ThreadX**,
+- la pile TCP/IP **NetX Duo**,
+- et l’envoi des données vers la plateforme **ThingSpeak** pour stockage, visualisation et analyse.
 
-Client TCP communicant avec un serveur distant via le protocole TCP/IP, intégrant une architecture multi-thread ThreadX et la gestion de pile réseau NetXDuo.
+Le système final permet de réaliser la chaîne suivante :
 
-#### Architecture applicative
+**Capteurs → STM32 → Ethernet → DNS/TCP/HTTP → ThingSpeak → Courbes et statistiques**
 
-L'initialisation des ressources NetX/NetXDuo s'effectue dans `tx_application_define()` appelée au démarrage du kernel ThreadX :
+---
 
-- **Allocation d'un pool de paquets** (`NX_PACKET_POOL`) pour gérer les buffers réseau.
-- **Initialisation d'une instance IP** (`NX_IP`) utilisant ce pool.
-- **Activation des protocoles** ARP, ICMP, UDP et TCP sur l'instance IP.
-- **Création d'un client DHCP** pour l'acquisition automatique d'adresse IP.
+## Matériel et environnement
 
-Deux threads applicatifs sont créés avec priorité identique (10) :
+- **Carte cible** : Nucleo-N657X0-Q
+- **Microcontrôleur** : STM32N657
+- **Réseau** : Ethernet
+- **Environnement logiciel** :
+  - STM32CubeIDE
+  - STM32CubeMX
+  - Azure RTOS ThreadX
+  - Azure RTOS NetX Duo
+  - ThingSpeak / MATLAB
 
-| Thread | Flags de création | Rôle |
-|---|---|---|
-| **NxAppThread** | TX_AUTO_START | Démarre automatiquement ; lance le client DHCP et attend la résolution IP avant de relancer AppTCPThread |
-| **AppTCPThread** | TX_DONT_START | Créée mais attendant le signal de NxAppThread ; effectue la connexion TCP et l'échange de messages |
+---
 
-#### Fonctionnement de NxAppThread
+## Vue d’ensemble du projet
 
-1. Lance le client DHCP.
-2. Attend la résolution de l'adresse IP du board.
-3. Reprend l'exécution de `AppTCPThread`.
+Le projet final s’appuie sur :
 
-#### Fonctionnement de AppTCPThread
+- **ThreadX** pour l’ordonnancement multi-thread,
+- **NetX Duo** pour la pile réseau,
+- **DHCP** pour obtenir automatiquement une adresse IP,
+- **DNS** pour résoudre le nom du serveur ThingSpeak,
+- **TCP/HTTP** pour envoyer les mesures,
+- **ThingSpeak** pour stocker et afficher les données sous forme de graphes.
 
-1. Crée un socket TCP.
-2. Se connecte au serveur TCP distant sur le port prédéfini.
-3. À succès de connexion, envoie jusqu'à `MAX_PACKET_COUNT` messages au serveur.
-4. Pour chaque message envoyé :
-   - Lit la réponse du serveur (echo).
-   - Affiche la réponse sur la HyperTerminal (USART1 à 115 200 bps).
-   - Bascule la LED verte pour indication visuelle.
+Les grandeurs utilisées dans ce TP sont :
 
-#### Résultats attendus
+- **température**
+- **humidité**
+- **pression**
 
-- Affichage de l'adresse IP du board sur la HyperTerminal.
-- Affichage de chaque réponse du serveur.
-- Récapitulatif de succès : `SUCCESS : 100 / 100 packets sent` (selon `MAX_PACKET_COUNT`).
-- Basculement continu de la LED verte pendant le transfert.
+Les capteurs retenus sont :
 
-#### Comportements en cas d'erreur
+- **HTS221** pour la température et l’humidité
+- **LPS22HH** pour la pression
 
-- **LED rouge qui bascule** : indication d'une erreur au cours de l'exécution.
-- **Message d'échec affiché** : affichage des messages attendus vs. reçus en cas d'incomplétude de l'échange.
+---
 
-#### Configuration et déploiement
+## Étape 1 — Lecture des données capteurs
 
-**Configuration TCP (fichier `app_netxduo.h`)**  
-Éditer les valeurs suivantes :
+La première étape consiste à valider le bon fonctionnement des capteurs sur la carte STM32.
+
+Les fichiers capteurs permettent de lire les mesures environnementales et de les afficher sur la console série.  
+Les valeurs observées sont ensuite utilisées dans la partie réseau.
+
+Les trois données principales retenues pour l’envoi vers le cloud sont :
+
+- température (`temperature_c`)
+- humidité (`humidity_pct`)
+- pression (`pressure_hpa`)
+
+---
+
+## Étape 2 — Intégration I2C dans le projet réseau
+
+Le projet réseau final doit être capable de dialoguer avec les capteurs.  
+Pour cela, l’interface **I2C1** a été ajoutée au projet principal.
+
+Les éléments nécessaires sont :
+
+- activation du module HAL I2C,
+- ajout des fichiers HAL I2C (`stm32n6xx_hal_i2c.*`, `stm32n6xx_hal_i2c_ex.*`),
+- configuration de `I2C1` dans `main.c`,
+- ajout des définitions de broches dans `main.h`,
+- ajout du MSP I2C dans `stm32n6xx_hal_msp.c`.
+
+Cela permet au projet réseau d’accéder directement aux capteurs.
+
+---
+
+## Étape 3 — Création d’une structure commune des données
+
+Pour transmettre proprement les mesures au module réseau, une structure de données dédiée a été créée :
 
 ```c
-#define TCP_SERVER_ADDRESS  "192.168.1.100"   // Adresse IP du serveur
-#define TCP_SERVER_PORT     6000              // Port TCP d'écoute
-```
+typedef struct {
+    float temperature_c;
+    float humidity_pct;
+    float pressure_hpa;
+} sensor_packet_t;
+## Structure des données
 
-**Test avec echotool (serveur d'écho)**  
-Sur PC Windows, lancer un serveur d'écho :
+Cette structure permet de regrouper dans un même objet les données principales à transmettre vers le serveur distant.
 
-```cmd
-c:\> .\echotool.exe /p tcp /s 6000
-```
+Elle facilite l’organisation du code en séparant clairement :
 
-Le board client se connecte et envoie les messages, qui sont renvoyés par le serveur.
+- les données issues des capteurs,
+- la construction des messages réseau,
+- et la transmission vers ThingSpeak.
 
-**Prérequis réseau**
+Les champs `sample_id` et `timestamp_s` permettent respectivement :
 
-- Un serveur DHCP accessible sur le LAN (pour l'acquisition IP).
-- L'adresse MAC du board doit être unique sur le LAN. Adresse MAC statique définie dans `main.c` — `MX_ETH_Init()` :
-  ```c
-  MACAddr[0] = 0x00;
-  MACAddr[1] = 0x80;
-  MACAddr[2] = 0xE0;
-  MACAddr[3] = 0x00;
-  MACAddr[4] = 0x10;
-  MACAddr[5] = 0x00;
-  ```
+- d’identifier chaque échantillon envoyé,
+- d’associer un temps à chaque mesure.
 
-**Exécution en développement (debug)**
+---
 
-1. Placer les switchs en mode développement (BOOT1 = 2-3).
-2. Ouvrir le projet dans STM32CubeIDE.
-3. Éditer `app_netxduo.h` (adresse et port du serveur).
-4. Compiler et charger en RAM du board.
-5. Lancer le débogage (debug mode).
+## Étape 4 — Initialisation du réseau avec ThreadX / NetX Duo
 
-**Exécution depuis la flash externe**
+Le projet réseau repose sur **Azure RTOS ThreadX** et **NetX Duo**.
 
-1. Générer le binaire `Nx_TCP_Echo_Client.bin`.
-2. Signer avec CubeProgrammer et STM32_SigningTool_CLI :
-   ```cmd
-   STM32_SigningTool_CLI.exe -bin Nx_TCP_Echo_Client.bin -nk -of 0x80000000 -t fsbl -o Nx_TCP_Echo_Client-trusted.bin -hv 2.3 -dump Nx_TCP_Echo_Client-trusted.bin
-   ```
-3. Charger `Nx_TCP_Echo_Client-trusted.bin` en flash externe à l'adresse `0x70000000` via CubeProgrammer.
-4. Configurer les switchs : BOOT0 = 1-2, BOOT1 = 1-2.
-5. Appuyer sur reset.
+Au démarrage, l’application initialise les ressources nécessaires :
 
-> **Note :** Pour CubeProgrammer v2.21+, ajouter l'option `-align` à la commande de signature.
+- création d’un pool de paquets (`NX_PACKET_POOL`) pour gérer les buffers réseau,
+- création d’une instance IP (`NX_IP`),
+- activation des protocoles :
+  - ARP  
+  - ICMP  
+  - UDP  
+  - TCP  
+- création d’un client DHCP pour obtenir automatiquement une adresse IP,
+- création d’un client DNS pour résoudre le nom du serveur ThingSpeak.
 
-#### Conseils d'utilisation ThreadX
+Cette étape prépare la carte à fonctionner comme un équipement réseau connecté.
 
-- ThreadX utilise **Systick** comme base de temps ; la HAL doit utiliser un timer IP distinct (TIMx).
-- Fréquence des ticks configurée par défaut à **100 ticks/sec** (`TX_TIMER_TICKS_PER_SECOND` dans `tx_user.h`). Modifier aussi `tx_initialize_low_level.S` en cas de changement.
-- ThreadX désactive tous les interrupts au démarrage du kernel ; tout appel système (HAL, BSP) doit être effectué en début d'application ou dans les fonctions d'entrée des threads.
-- Pour allocation dynamique, éditer le fichier linker (`.ld`) afin d'exposer la première adresse libre en RAM vers `tx_application_define()` (voir détails dans projet ou documentation STM32CubeIDE).
+---
 
-#### Conseils d'utilisation NetX Duo
+## Étape 5 — Organisation en threads avec ThreadX
 
-- Le pool de paquets `NX_PACKET_POOL` doit être alloué dans une section mémoire dédiée (`.NetXPoolSection`).
-- En cas de congestion réseau, augmenter les paramètres `ETH_TX_DESC_CNT` et `ETH_RX_DESC_CNT` dans `stm32n6xx_hal_conf.h` (coûteux en mémoire).
+L’application est organisée autour de plusieurs threads.
 
+### NxAppThread
+
+Ce thread démarre automatiquement et permet de :
+
+- démarrer le client DHCP,
+- attendre l’attribution de l’adresse IP,
+- initialiser le client DNS,
+- effectuer les premiers tests réseau,
+- relancer le thread d’envoi des données.
+
+### AppTCPThread
+
+Ce thread est initialement suspendu puis relancé une fois le réseau prêt.
+
+Son rôle est de :
+
+- préparer les données,
+- construire la requête HTTP,
+- résoudre l’adresse du serveur,
+- ouvrir une connexion TCP,
+- envoyer les mesures,
+- recevoir la réponse HTTP,
+- recommencer périodiquement.
+
+Cette architecture sépare clairement :
+
+- la mise en service du réseau,
+- la logique applicative.
+
+---
+
+## Étape 6 — Obtention de l’adresse IP par DHCP
+
+La carte obtient automatiquement une adresse IP grâce au protocole DHCP.
+
+Le client DHCP fournit :
+
+- l’adresse IP locale,
+- le masque réseau,
+- les paramètres de communication.
+
+L’adresse IP est affichée sur la console série.
+
+---
+
+## Étape 7 — Vérification de la connectivité réseau
+
+Un test de connectivité est réalisé via un **ping ICMP** afin de vérifier :
+
+- le bon fonctionnement de la pile réseau,
+- l’activité de la communication Ethernet,
+- la capacité à joindre une autre machine.
+
+---
+
+## Étape 8 — Résolution DNS
+
+Le nom de domaine utilisé est :
+api.thingspeak.com
+
+
+Le DNS permet de :
+
+- traduire ce nom en adresse IP,
+- permettre l’établissement d’une connexion TCP.
+
+Le DNS joue le rôle d’un annuaire réseau.
+
+---
+
+## Étape 9 — Préparation des données
+
+Les données sont stockées dans `sensor_packet_t` :
+
+- température  
+- humidité  
+- pression  
+
+
+Association avec ThingSpeak :
+
+- `field1` → température  
+- `field2` → humidité  
+- `field3` → pression  
+
+
+---
+
+## Étape 10 — Construction de la requête HTTP
+
+La requête HTTP contient :
+
+- l’adresse du service ThingSpeak,
+- la Write API Key,
+- les champs `field1`, `field2`, etc.
+
+Elle est construite dynamiquement avant chaque envoi.
+
+---
+
+## Étape 11 — Envoi des données
+
+L’application :
+
+1. crée un socket TCP  
+2. se connecte au serveur  
+3. envoie la requête HTTP  
+4. lit la réponse  
+5. ferme la connexion  
+6. recommence périodiquement  
+
+Cette étape valide toute la chaîne IoT.
+
+---
+
+## Étape 12 — Visualisation sur ThingSpeak
+
+La plateforme permet :
+
+- d’afficher les données sous forme de graphes,
+- de suivre leur évolution,
+- de vérifier la régularité,
+- de relire les données via MATLAB.
+
+Grandeurs visualisées :
+
+- température  
+- humidité  
+- pression  
+
+---
+
+## Étape 13 — Analyse statistique avec MATLAB
+
+Indicateurs calculés :
+
+- moyenne  
+- médiane  
+- minimum  
+- maximum  
+- écart-type  
+
+### Rôle :
+
+- **Moyenne** : tendance générale  
+- **Médiane** : valeur centrale robuste  
+- **Minimum** : plus petite valeur  
+- **Maximum** : plus grande valeur  
+- **Écart-type** : dispersion des données  
+
+---
+
+## Étape 14 — Résultats attendus
+
+- affichage de l’adresse IP  
+- connectivité validée  
+- résolution DNS correcte  
+- envoi périodique des données  
+- visualisation sur ThingSpeak  
+- statistiques correctes  
+
+Le système permet :
+
+- la lecture des capteurs,  
+- la transmission réseau,  
+- l’exploitation cloud.  
+
+---
+
+## Étape 15 — Intérêt du TP
+
+Ce TP couvre :
+
+- lecture de capteurs  
+- communication I2C  
+- gestion temps réel (ThreadX)  
+- pile réseau (NetX Duo)  
+- DHCP  
+- DNS  
+- TCP / HTTP  
+- cloud IoT  
+- analyse des données  
+
+---
+
+## Conclusion
+
+Ce TP met en œuvre une chaîne complète de communication embarquée sur **STM32N657**.
+
+Les données capteurs sont :
+
+1. acquises,  
+2. structurées,  
+3. transmises via Ethernet (DHCP, DNS, TCP, HTTP),  
+4. stockées dans le cloud (ThingSpeak),  
+5. visualisées et analysées (MATLAB).  
+
+Ce travail illustre un système IoT complet, de la mesure physique jusqu’à l’exploitation des données.
 ### Fichiers
 
 | Fichier | Description |
